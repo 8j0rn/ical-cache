@@ -1,0 +1,23 @@
+# .htaccess для папки /8j0rn/
+# Если ваш хостинг использует Apache с mod_wsgi
+
+# Включаем обработку Python файлов как WSGI
+Options +ExecCGI
+AddHandler wsgi-script .wsgi .py
+
+# Перенаправляем все запросы на index.wsgi
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.wsgi/$1 [QSA,L]
+
+# Заголовки для iCal файлов
+<FilesMatch "\.ics$">
+    ForceType text/calendar
+    Header set Content-Type "text/calendar; charset=utf-8"
+    Header set Cache-Control "public, max-age=300"
+</FilesMatch>
+
+# Настройки для WSGI
+SetEnv PYTHONPATH /путь/до/wordpress/8j0rn
+SetEnv WSGI_APPLICATION index.wsgi

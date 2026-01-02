@@ -1,0 +1,79 @@
+# .gitignore
+
+# Файлы конфигурации с секретами
+.env
+*.env.local
+*.env.*.local
+
+# Папка с данными
+data/
+!data/.gitkeep
+
+# Папка с кэшем
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Виртуальное окружение
+.vbox
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Операционные системы
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Логи
+*.log
+logs/
+
+# Резервные копии
+*.bak
+*.backup
+
+# Временные файлы
+*.tmp
+*.temp
+
+# Базы данных
+*.db
+*.sqlite
+
+# Папка public если используется
+public/ical/
+!public/.gitkeep
+
+# Файлы загрузок
+uploads/
