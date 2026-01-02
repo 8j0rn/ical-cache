@@ -45,6 +45,7 @@ venv.bak/
 .idea/
 *.swp
 *.swo
+*.code-workspace
 
 # Операционные системы
 .DS_Store
