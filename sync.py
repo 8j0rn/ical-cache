@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sync_final.py - Рабочая версия синхронизации
+sync.py - Рабочая версия синхронизации
 """
 import os
 import sys
@@ -49,7 +49,7 @@ def sync_keys(limit=None):
             print("  ⏭ Кэш актуален")
             continue
         
-        # Загрузка (универсальный метод)
+        # Загрузка
         content = ical.download_ical(ical_key, property_id)
         
         if content:
@@ -66,7 +66,7 @@ def sync_keys(limit=None):
         
         # Задержка
         if i < len(keys_to_process):
-            time.sleep(config.SYNC_DELAY)
+            time.sleep(1)  # 1 секунда задержки между запросами
     
     # Результат
     result = {
@@ -133,9 +133,9 @@ if __name__ == '__main__':
     else:
         parser.print_help()
         print("\nПримеры:")
-        print("  python3 sync_final.py --all         # Все ключи")
-        print("  python3 sync_final.py --test 3      # Тест 3 ключа")
-        print("  python3 sync_final.py --test        # Тест 5 ключей")
+        print("  python3 sync.py --all         # Все ключи")
+        print("  python3 sync.py --test 3      # Тест 3 ключа")
+        print("  python3 sync.py --test        # Тест 5 ключей")
         sys.exit(0)
     
     print(json.dumps(result, indent=2, ensure_ascii=False))
