@@ -16,6 +16,15 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 from urllib.parse import unquote
 
+# ============================================================================
+# ОТЛАДКА - добавляем в самое начало
+# ============================================================================
+print(f"\n{'='*60}", file=sys.stderr)
+print(f"[APP DEBUG] Загрузка app.py начата", file=sys.stderr)
+print(f"[APP DEBUG] Python: {sys.version}", file=sys.stderr)
+print(f"[APP DEBUG] Путь: {__file__}", file=sys.stderr)
+print(f"[APP DEBUG] Текущая директория: {os.getcwd()}", file=sys.stderr)
+
 # Загружаем переменные окружения из .env
 from dotenv import load_dotenv
 
@@ -618,15 +627,14 @@ class ICalApp:
     """Основное WSGI приложение с учетом BASE_PATH"""
     
     def __init__(self):
+        print(f"[APP DEBUG] Инициализация ICalApp", file=sys.stderr)
         self.db = Database()
         self.ical = ICalManager()
         
         # Валидация конфигурации при запуске
         errors = config.validate()
         if errors:
-            logger.warning(f"Проблемы с конфигурацией: {errors}")
-            if config.DEBUG:
-                print(f"⚠ Внимание: {errors}")
+            print(f"[APP DEBUG] Проблемы с конфигурацией: {errors}", file=sys.stderr)
     
     def _url(self, path):
         """Формирует URL с учетом BASE_PATH"""
@@ -709,50 +717,84 @@ class ICalApp:
     
     def __call__(self, environ, start_response):
         """Основной обработчик WSGI"""
-        path = environ.get('PATH_INFO', '')
-        method = environ.get('REQUEST_METHOD', 'GET')
+        # ОТЛАДКА - выводим все переменные
+        print(f"\n[APP DEBUG] {'='*50}", file=sys.stderr)
+        print(f"[APP DEBUG] Новый запрос", file=sys.stderr)
+        print(f"[APP DEBUG] PATH_INFO: '{environ.get('PATH_INFO', '')}'", file=sys.stderr)
+        print(f"[APP DEBUG] SCRIPT_NAME: '{environ.get('SCRIPT_NAME', '')}'", file=sys.stderr)
+        print(f"[APP DEBUG] REQUEST_METHOD: {environ.get('REQUEST_METHOD', '')}", file=sys.stderr)
+        print(f"[APP DEBUG] QUERY_STRING: {environ.get('QUERY_STRING', '')}", file=sys.stderr)
         
-        logger.debug(f"Запрос: {method} {path}")
+        # ВРЕМЕННО отключаем авторизацию для теста
+        path = environ.get('PATH_INFO', '/')
         
-        # Публичные пути доступны без авторизации
-        # if self.is_public_path(path):
-        #     return self.route_request(path, environ, start_response)
+        if not path:
+            path = '/'
+        elif not path.startswith('/'):
+            path = '/' + path
         
-        # Проверяем авторизацию для остальных путей
-        # if not self.check_auth(environ):
-        #     return self.require_auth(environ, start_response)
+        print(f"[APP DEBUG] Обрабатываем путь: '{path}'", file=sys.stderr)
         
-        # Авторизация пройдена
-        return self.route_request(path, environ, start_response)
+        try:
+            # Пробуем обработать запрос
+            result = self.route_request(path, environ, start_response)
+            print(f"[APP DEBUG] Запрос обработан успешно", file=sys.stderr)
+            return result
+        except Exception as e:
+            print(f"[APP DEBUG] Ошибка обработки: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            
+            # Возвращаем ошибку
+            headers = [('Content-Type', 'text/plain; charset=utf-8')]
+            start_response('500 Internal Server Error', headers)
+            return [f"Ошибка приложения: {str(e)}".encode('utf-8')]
     
     def route_request(self, path, environ, start_response):
         """Маршрутизация запросов"""
-        # Убираем BASE_PATH для маршрутизации
-        if path.startswith(config.BASE_PATH):
-            path = path[len(config.BASE_PATH):]
-        
-        # Добавляем слеш если путь пустой
-        if not path:
-            path = '/'
+        print(f"[APP DEBUG] route_request: path='{path}'", file=sys.stderr)
         
         method = environ.get('REQUEST_METHOD', 'GET')
+        print(f"[APP DEBUG] method='{method}'", file=sys.stderr)
         
+        # Убираем BASE_PATH если он есть
+        if config.BASE_PATH and path.startswith(config.BASE_PATH):
+            path = path[len(config.BASE_PATH):]
+            print(f"[APP DEBUG] Убрали BASE_PATH, новый путь='{path}'", file=sys.stderr)
+        
+        # Нормализуем путь
+        if not path:
+            path = '/'
+        elif not path.startswith('/'):
+            path = '/' + path
+        
+        print(f"[APP DEBUG] Нормализованный путь='{path}'", file=sys.stderr)
+        
+        # Обрабатываем пути
         if method == 'GET' and path.startswith('/ical/'):
+            print(f"[APP DEBUG] → handle_ical_request", file=sys.stderr)
             return self.handle_ical_request(path, environ, start_response)
         elif method == 'GET' and path == '/sync':
+            print(f"[APP DEBUG] → handle_sync_request", file=sys.stderr)
             return self.handle_sync_request(environ, start_response)
         elif method == 'GET' and path.startswith('/sync/'):
+            print(f"[APP DEBUG] → handle_sync_single", file=sys.stderr)
             return self.handle_sync_single(path, environ, start_response)
         elif method == 'GET' and path == '/admin':
+            print(f"[APP DEBUG] → handle_admin", file=sys.stderr)
             return self.handle_admin(environ, start_response)
         elif method == 'GET' and path == '/health':
+            print(f"[APP DEBUG] → handle_health", file=sys.stderr)
             return self.handle_health(environ, start_response)
-        elif method == 'GET' and path == '/index.wsgi':
+        elif method == 'GET' and (path == '/' or path == '/index.wsgi'):
+            print(f"[APP DEBUG] → handle_root", file=sys.stderr)
             return self.handle_root(environ, start_response)
         elif method == 'GET' and path == '/stats':
+            print(f"[APP DEBUG] → handle_stats", file=sys.stderr)
             return self.handle_stats(environ, start_response)
         else:
-            return self.handle_404(environ, start_response)
+            print(f"[APP DEBUG] → handle_404 (путь не найден)", file=sys.stderr)
+            return self.handle_404(environ, start_response, f"Path not found: {path}")
 
     # Добавляем новый метод в ICalManager
     def fetch_ical_by_key(self, ical_key):

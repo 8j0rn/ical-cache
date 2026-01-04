@@ -1,83 +1,137 @@
 #!/usr/bin/env python3
 """
-WSGI entry point for iCal Sync Service
-Точка входа для запуска на хостинге с поддержкой WSGI
+index.wsgi - Упрощенная версия для отладки
 """
 import sys
 import os
-import logging
 
-# Добавляем путь к проекту в sys.path
+# ============================================================================
+# 1. БАЗОВАЯ НАСТРОЙКА
+# ============================================================================
 project_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, project_dir)
 
-# Настраиваем логирование для WSGI
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(project_dir, 'data', 'logs', 'wsgi.log')),
-        logging.StreamHandler(sys.stderr)  # Для хостингов, которые пишут в stderr
-    ]
-)
+# Для отладки
+sys.stderr.write("=" * 60 + "\n")
+sys.stderr.write(f"[WSGI] Запуск из: {project_dir}\n")
+sys.stderr.write(f"[WSGI] Python: {sys.executable}\n")
 
-# Загружаем переменные окружения
-from dotenv import load_dotenv
-env_path = os.path.join(project_dir, '.env')
-if os.path.exists(env_path):
-    load_dotenv(env_path)
-    print(f"WSGI: Загружена конфигурация из {env_path}", file=sys.stderr)
-else:
-    print(f"WSGI: Внимание: файл {env_path} не найден", file=sys.stderr)
+# ============================================================================
+# 2. ВИРТУАЛЬНОЕ ОКРУЖЕНИЕ (.vbox или venv)
+# ============================================================================
+# Проверяем .vbox
+vbox_path = os.path.join(project_dir, '.vbox')
+if os.path.exists(vbox_path):
+    sys.stderr.write(f"[WSGI] Найден .vbox: {vbox_path}\n")
+    
+    # Пытаемся добавить site-packages
+    import glob
+    site_pattern = os.path.join(vbox_path, 'lib', 'python*', 'site-packages')
+    for site_path in glob.glob(site_pattern):
+        if os.path.exists(site_path) and site_path not in sys.path:
+            sys.path.insert(0, site_path)
+            sys.stderr.write(f"[WSGI] Добавлен путь: {site_path}\n")
 
-# Импортируем основное приложение
+# ============================================================================
+# 3. ПУТЬ ПРОЕКТА (как рекомендует хостинг)
+# ============================================================================
+if project_dir not in sys.path:
+    sys.path.append(project_dir)
+    sys.stderr.write(f"[WSGI] Добавлен проект: {project_dir}\n")
+
+# ============================================================================
+# 4. ПРОВЕРКА ИМПОРТОВ
+# ============================================================================
+sys.stderr.write("[WSGI] Проверка импортов...\n")
 try:
-    from app import application
-    print(f"WSGI: Приложение успешно загружено из {project_dir}", file=sys.stderr)
+    from dotenv import load_dotenv
+    sys.stderr.write("[WSGI] ✅ dotenv импортирован\n")
+    
+    # Загружаем .env
+    env_path = os.path.join(project_dir, '.env')
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        sys.stderr.write(f"[WSGI] Загружен .env: {env_path}\n")
+    else:
+        sys.stderr.write(f"[WSGI] ⚠️ .env не найден\n")
+        
+except ImportError as e:
+    sys.stderr.write(f"[WSGI] ❌ dotenv НЕ импортирован: {e}\n")
+
+# ============================================================================
+# 5. ИМПОРТ ПРИЛОЖЕНИЯ
+# ============================================================================
+sys.stderr.write("[WSGI] Импорт приложения...\n")
+try:
+    from app import application as original_app
+    sys.stderr.write("[WSGI] ✅ Приложение импортировано\n")
 except Exception as e:
-    print(f"WSGI: Ошибка загрузки приложения: {e}", file=sys.stderr)
-    raise
-
-# Обертка для приложения (опционально, для дополнительной обработки)
-class WSGIApplicationWrapper:
-    """Обертка для WSGI приложения с дополнительной обработкой"""
+    sys.stderr.write(f"[WSGI] ❌ Ошибка импорта: {e}\n")
+    import traceback
+    traceback.print_exc(file=sys.stderr)
     
-    def __init__(self, app):
-        self.app = app
+    # Создаем простое приложение для отладки
+    def debug_app(environ, start_response):
+        start_response('200 OK', [('Content-Type', 'text/plain; charset=utf-8')])
+        
+        output = []
+        output.append("=== WSGI Debug ===")
+        output.append(f"Python: {sys.executable}")
+        output.append(f"Version: {sys.version}")
+        output.append(f"Project: {project_dir}")
+        output.append("")
+        output.append("=== Environment ===")
+        for key in ['PATH_INFO', 'SCRIPT_NAME', 'REQUEST_METHOD', 'QUERY_STRING']:
+            output.append(f"{key}: {environ.get(key, '')}")
+        output.append("")
+        output.append("=== sys.path ===")
+        for i, path in enumerate(sys.path[:10]):
+            output.append(f"{i}: {path}")
+        
+        return ["\n".join(output).encode('utf-8')]
     
-    def __call__(self, environ, start_response):
-        # Логирование запросов
-        if environ.get('REQUEST_METHOD') and environ.get('PATH_INFO'):
-            print(
-                f"WSGI Request: {environ['REQUEST_METHOD']} {environ['PATH_INFO']}",
-                file=sys.stderr
-            )
-        
-        # Добавляем информацию о проекте в заголовки
-        def custom_start_response(status, headers, exc_info=None):
-            headers.append(('X-Served-By', 'iCal-Sync-Service/1.0'))
-            headers.append(('X-Project-Path', project_dir))
-            return start_response(status, headers, exc_info)
-        
-        # Запускаем основное приложение
-        return self.app(environ, custom_start_response)
+    original_app = debug_app
 
-# Создаем экземпляр приложения для WSGI сервера
-application = WSGIApplicationWrapper(application)
+# ============================================================================
+# 6. ОБЕРТКА ДЛЯ ОБРАБОТКИ ПУТЕЙ
+# ============================================================================
+def wsgi_app(environ, start_response):
+    """Обертка для исправления путей"""
+    
+    # Логируем запрос
+    path_info = environ.get('PATH_INFO', '')
+    script_name = environ.get('SCRIPT_NAME', '')
+    
+    sys.stderr.write(f"[WSGI] Запрос: SCRIPT_NAME='{script_name}', PATH_INFO='{path_info}'\n")
+    
+    # Исправляем пустой PATH_INFO
+    if not path_info or path_info == '':
+        environ['PATH_INFO'] = '/'
+        sys.stderr.write(f"[WSGI] Исправлен PATH_INFO: '/' -> '/'\n")
+    
+    # Убираем /index.wsgi из PATH_INFO если он там есть
+    elif '/index.wsgi' in path_info:
+        new_path = path_info.replace('/index.wsgi', '')
+        if not new_path:
+            new_path = '/'
+        environ['PATH_INFO'] = new_path
+        sys.stderr.write(f"[WSGI] Исправлен PATH_INFO: '{path_info}' -> '{new_path}'\n")
+    
+    # Запускаем оригинальное приложение
+    return original_app(environ, start_response)
 
-# Для отладки: если файл запущен напрямую
+# Экспортируем обернутое приложение
+application = wsgi_app
+
+sys.stderr.write("[WSGI] Приложение готово\n")
+sys.stderr.write("=" * 60 + "\n")
+
+# ============================================================================
+# 7. ЛОКАЛЬНЫЙ ЗАПУСК ДЛЯ ТЕСТА
+# ============================================================================
 if __name__ == '__main__':
     from wsgiref.simple_server import make_server
-    
-    # Читаем настройки из переменных окружения
-    host = os.environ.get('HOST', '0.0.0.0')
-    port = int(os.environ.get('PORT', '8000'))
-    
-    print(f"Запуск WSGI сервера на {host}:{port}")
-    print(f"Проект: {project_dir}")
-    
-    try:
-        httpd = make_server(host, port, application)
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        print("\nСервер остановлен")
+    print("Запуск на http://localhost:8000/")
+    print("Откройте: http://localhost:8000/")
+    print("         http://localhost:8000/health")
+    httpd = make_server('localhost', 8000, application)
+    httpd.serve_forever()
