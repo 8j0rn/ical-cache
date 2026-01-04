@@ -17,6 +17,10 @@ import urllib.request
 import ssl
 import re
 
+import time
+
+from ical_stats import ICalStats
+
 # Для отладки
 print(f"[APP] Загрузка с сессионной авторизацией", file=sys.stderr)
 
@@ -521,6 +525,14 @@ class ICalApp:
             return self.handle_root(environ, start_response)
         elif method == 'POST' and path == '/login':
             return self.handle_login_post(environ, start_response)
+        elif method == 'GET' and path.startswith('/sync_key/'):
+            return self.handle_sync_single(environ, start_response)
+        elif method == 'GET' and path.startswith('/delete_error/'):
+            return self.handle_delete_error(environ, start_response)
+        elif method == 'GET' and path == '/cleanup':
+            return self.handle_cleanup(environ, start_response)
+        elif method == 'GET' and path == '/stats':
+            return self.handle_stats(environ, start_response)
         else:
             return self.handle_404(environ, start_response)
     
@@ -537,55 +549,110 @@ class ICalApp:
             <title>Вход в админку</title>
             <meta charset="utf-8">
             <style>
-                body {{ font-family: Arial, sans-serif; max-width: 400px; margin: 100px auto; }}
-                .login-box {{ 
-                    border: 1px solid #ddd; 
-                    padding: 30px; 
-                    border-radius: 10px;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                body {{ 
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    margin: 0;
+                    padding: 20px;
                 }}
-                h2 {{ text-align: center; margin-bottom: 30px; color: #333; }}
-                .form-group {{ margin-bottom: 20px; }}
-                label {{ display: block; margin-bottom: 5px; font-weight: bold; }}
+                .login-box {{ 
+                    background: white;
+                    padding: 40px;
+                    border-radius: 15px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                    width: 100%;
+                    max-width: 400px;
+                }}
+                h2 {{ 
+                    text-align: center; 
+                    margin-bottom: 30px; 
+                    color: #333;
+                    font-weight: 300;
+                }}
+                .logo {{
+                    text-align: center;
+                    font-size: 32px;
+                    margin-bottom: 20px;
+                    color: #764ba2;
+                }}
+                .form-group {{ margin-bottom: 25px; }}
+                label {{ 
+                    display: block; 
+                    margin-bottom: 8px; 
+                    font-weight: 500;
+                    color: #555;
+                }}
                 input[type="text"],
                 input[type="password"] {{
                     width: 100%;
-                    padding: 12px;
-                    border: 1px solid #ddd;
-                    border-radius: 5px;
+                    padding: 14px;
+                    border: 2px solid #e0e0e0;
+                    border-radius: 8px;
                     font-size: 16px;
                     box-sizing: border-box;
+                    transition: border-color 0.3s;
+                }}
+                input[type="text"]:focus,
+                input[type="password"]:focus {{
+                    outline: none;
+                    border-color: #764ba2;
+                    box-shadow: 0 0 0 3px rgba(118, 75, 162, 0.1);
                 }}
                 button {{ 
                     width: 100%; 
-                    padding: 12px; 
-                    background: #4CAF50; 
+                    padding: 16px; 
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     color: white; 
                     border: none;
-                    border-radius: 5px;
+                    border-radius: 8px;
                     font-size: 16px;
+                    font-weight: 600;
                     cursor: pointer;
+                    transition: transform 0.2s, box-shadow 0.2s;
                 }}
-                button:hover {{ background: #45a049; }}
+                button:hover {{ 
+                    transform: translateY(-2px);
+                    box-shadow: 0 10px 20px rgba(118, 75, 162, 0.3);
+                }}
+                button:active {{ transform: translateY(0); }}
+                
                 .error {{ 
-                    color: #d32f2f; 
-                    background: #ffebee; 
-                    padding: 10px; 
-                    border-radius: 5px;
+                    background: #fee;
+                    color: #c33;
+                    padding: 12px;
+                    border-radius: 6px;
                     margin-bottom: 20px;
-                }}
-                .demo-credentials {{
-                    margin-top: 20px;
-                    padding: 15px;
-                    background: #f5f5f5;
-                    border-radius: 5px;
+                    border-left: 4px solid #c33;
                     font-size: 14px;
+                }}
+                
+                .forgot-link {{
+                    text-align: center;
+                    margin-top: 20px;
+                    font-size: 14px;
+                }}
+                .forgot-link a {{
+                    color: #764ba2;
+                    text-decoration: none;
+                }}
+                .forgot-link a:hover {{ text-decoration: underline; }}
+                
+                .copyright {{
+                    text-align: center;
+                    margin-top: 30px;
+                    color: #999;
+                    font-size: 12px;
                 }}
             </style>
         </head>
         <body>
             <div class="login-box">
-                <h2>Вход в админ-панель</h2>
+                <div class="logo">🔐 iCal Sync</div>
+                <h2>Вход в систему</h2>
                 
                 {'<div class="error">' + error + '</div>' if error else ''}
                 
@@ -593,24 +660,26 @@ class ICalApp:
                     <input type="hidden" name="redirect" value="{redirect_to}">
                     
                     <div class="form-group">
-                        <label for="username">Логин:</label>
+                        <label for="username">Имя пользователя</label>
                         <input type="text" id="username" name="username" 
-                               value="{config.ADMIN_USERNAME}" required>
+                            placeholder="Введите логин" required autofocus>
                     </div>
                     
                     <div class="form-group">
-                        <label for="password">Пароль:</label>
+                        <label for="password">Пароль</label>
                         <input type="password" id="password" name="password" 
-                               value="{config.ADMIN_PASSWORD}" required>
+                            placeholder="Введите пароль" required>
                     </div>
                     
-                    <button type="submit">Войти</button>
+                    <button type="submit">Войти в систему</button>
                 </form>
                 
-                <div class="demo-credentials">
-                    <p><strong>Демо учетные данные:</strong></p>
-                    <p>Логин: <code>{config.ADMIN_USERNAME}</code></p>
-                    <p>Пароль: <code>{config.ADMIN_PASSWORD}</code></p>
+                <div class="forgot-link">
+                    <a href="#">Забыли пароль?</a>
+                </div>
+                
+                <div class="copyright">
+                    © 2024 iCal Sync Service
                 </div>
             </div>
         </body>
@@ -734,9 +803,6 @@ class ICalApp:
                     <a href="{self._url('sync')}" class="btn btn-primary">Sync</a>
                     {'<a href="' + self._url('logout') + '" class="btn btn-danger">Выйти</a>' if is_authenticated else '<a href="' + self._url('login') + '" class="btn btn-primary">Войти</a>'}
                 </div>
-                
-                <p><small>Логин: <code>{config.ADMIN_USERNAME}</code><br>
-                Пароль: <code>{config.ADMIN_PASSWORD}</code></small></p>
             </div>
         </body>
         </html>
@@ -774,6 +840,14 @@ class ICalApp:
         # Получаем список ключей из БД
         keys = self.db.get_all_keys()
         
+        # Получаем файлы из кэша
+        cache_manager = ICalManager()
+        cache_files = self._get_cache_files_info()
+        error_files = self._get_error_files_info()
+        
+        # Получаем статистику
+        stats = ICalStats.get_stats(days=7)
+        
         html = f"""
         <!DOCTYPE html>
         <html>
@@ -781,12 +855,88 @@ class ICalApp:
             <title>iCal Sync Admin</title>
             <meta charset="utf-8">
             <style>
-                body {{ font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }}
-                header {{ background: #4CAF50; color: white; padding: 20px; border-radius: 10px; }}
-                .stats {{ background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }}
-                table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-                th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }}
-                th {{ background: #f2f2f2; }}
+                body {{ font-family: Arial, sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px; }}
+                header {{ 
+                    background: linear-gradient(135deg, #4CAF50, #45a049);
+                    color: white; 
+                    padding: 25px; 
+                    border-radius: 10px;
+                    margin-bottom: 20px;
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                }}
+                .stats-container {{ 
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                    gap: 15px;
+                    margin: 20px 0;
+                }}
+                .stat-card {{
+                    background: white;
+                    padding: 20px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                    border-left: 4px solid #4CAF50;
+                }}
+                .stat-card h4 {{ margin: 0 0 10px 0; color: #333; }}
+                .stat-card .value {{ 
+                    font-size: 24px; 
+                    font-weight: bold; 
+                    color: #4CAF50;
+                    margin: 10px 0;
+                }}
+                .stat-card .label {{ color: #666; font-size: 14px; }}
+                
+                .config-box {{
+                    background: #f8f9fa;
+                    border: 1px solid #dee2e6;
+                    border-radius: 8px;
+                    padding: 20px;
+                    margin: 20px 0;
+                }}
+                .config-row {{
+                    display: flex;
+                    justify-content: space-between;
+                    margin: 10px 0;
+                    padding: 8px 0;
+                    border-bottom: 1px solid #eee;
+                }}
+                .config-label {{ font-weight: bold; color: #495057; }}
+                .config-value {{ color: #6c757d; }}
+                
+                table {{ 
+                    width: 100%; 
+                    border-collapse: collapse; 
+                    margin-top: 20px;
+                    background: white;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }}
+                th, td {{ 
+                    padding: 12px 15px; 
+                    text-align: left; 
+                    border-bottom: 1px solid #dee2e6; 
+                }}
+                th {{ 
+                    background: #f8f9fa; 
+                    font-weight: 600;
+                    color: #495057;
+                    border-bottom: 2px solid #dee2e6;
+                }}
+                tr:hover {{ background: #f8f9fa; }}
+                
+                .status-badge {{
+                    display: inline-block;
+                    padding: 4px 8px;
+                    border-radius: 12px;
+                    font-size: 12px;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                }}
+                .status-fresh {{ background: #d4edda; color: #155724; }}
+                .status-stale {{ background: #fff3cd; color: #856404; }}
+                .status-missing {{ background: #f8d7da; color: #721c24; }}
+                
                 .btn {{ 
                     display: inline-block; 
                     padding: 10px 20px; 
@@ -798,38 +948,200 @@ class ICalApp:
                     border: none;
                     cursor: pointer;
                     font-size: 14px;
+                    transition: all 0.3s;
                 }}
-                .btn:hover {{ background: #45a049; }}
+                .btn:hover {{ 
+                    background: #45a049; 
+                    transform: translateY(-2px);
+                    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+                }}
                 .btn-secondary {{ background: #6c757d; }}
                 .btn-secondary:hover {{ background: #5a6268; }}
                 .btn-danger {{ background: #dc3545; }}
                 .btn-danger:hover {{ background: #c82333; }}
+                .btn-info {{ background: #17a2b8; }}
+                .btn-info:hover {{ background: #138496; }}
+                
+                .section-title {{
+                    margin-top: 40px;
+                    padding-bottom: 10px;
+                    border-bottom: 2px solid #4CAF50;
+                    color: #333;
+                }}
+                
+                .tabs {{
+                    display: flex;
+                    border-bottom: 2px solid #dee2e6;
+                    margin: 30px 0 20px 0;
+                }}
+                .tab {{
+                    padding: 10px 20px;
+                    cursor: pointer;
+                    border-bottom: 3px solid transparent;
+                    margin-bottom: -2px;
+                }}
+                .tab.active {{
+                    border-bottom-color: #4CAF50;
+                    font-weight: bold;
+                    color: #4CAF50;
+                }}
+                
+                .tab-content {{
+                    display: none;
+                }}
+                .tab-content.active {{
+                    display: block;
+                }}
+                
+                .file-size {{ color: #6c757d; font-size: 12px; }}
+                .timestamp {{ color: #6c757d; font-size: 12px; }}
+                
+                .actions-cell {{ white-space: nowrap; }}
+                .actions-cell a {{
+                    margin: 0 5px;
+                    color: #4CAF50;
+                    text-decoration: none;
+                }}
+                .actions-cell a:hover {{ text-decoration: underline; }}
+                
+                footer {{ 
+                    margin-top: 40px; 
+                    text-align: center; 
+                    color: #666;
+                    padding-top: 20px;
+                    border-top: 1px solid #dee2e6;
+                }}
             </style>
+            <script>
+                function showTab(tabName) {{
+                    // Скрыть все вкладки
+                    var tabContents = document.querySelectorAll('.tab-content');
+                    for (var i = 0; i < tabContents.length; i++) {{
+                        tabContents[i].style.display = 'none';
+                        tabContents[i].classList.remove('active');
+                    }}
+                    
+                    var tabs = document.querySelectorAll('.tab');
+                    for (var i = 0; i < tabs.length; i++) {{
+                        tabs[i].classList.remove('active');
+                    }}
+                    
+                    // Показать выбранную вкладку
+                    var selectedTab = document.getElementById(tabName + '-tab');
+                    var selectedContent = document.getElementById(tabName + '-content');
+                    
+                    if (selectedTab) {{
+                        selectedTab.classList.add('active');
+                    }}
+                    
+                    if (selectedContent) {{
+                        selectedContent.style.display = 'block';
+                        selectedContent.classList.add('active');
+                    }}
+                }}
+                
+                function confirmSync() {{
+                    if (confirm('Запустить синхронизацию всех iCal файлов? Это может занять несколько минут.')) {{
+                        window.location.href = '{self._url('sync')}';
+                    }}
+                }}
+                
+                function confirmCleanup() {{
+                    if (confirm('Очистить старые кэш-файлы? Будут удалены файлы старше {config.CACHE_CLEANUP_DAYS} дней.')) {{
+                        window.location.href = '{self._url('cleanup')}';
+                    }}
+                }}
+            </script>
         </head>
         <body>
             <header>
-                <h1>iCal Sync Admin Panel</h1>
-                <p>Управление синхронизацией iCal файлов</p>
+                <h1>📊 iCal Sync Admin Panel</h1>
+                <p>Управление синхронизацией iCal файлов для Авито</p>
             </header>
             
-            <div class="stats">
-                <h3>Статистика</h3>
-                <p>Найдено ключей в базе: <strong>{len(keys)}</strong></p>
-                <p>Активных сессий: <strong>{len(SessionStorage._sessions)}</strong></p>
-                <p>Логин: <code>{config.ADMIN_USERNAME}</code></p>
+            <div class="stats-container">
+                <div class="stat-card">
+                    <h4>📁 Ключи в БД</h4>
+                    <div class="value">{len(keys)}</div>
+                    <div class="label">Опубликованных объектов</div>
+                </div>
+                
+                <div class="stat-card">
+                    <h4>✅ Файлов iCal</h4>
+                    <div class="value">{len(cache_files)}</div>
+                    <div class="label">Сохранено в кэше</div>
+                </div>
+                
+                <div class="stat-card">
+                    <h4>⚠ Файлов ошибок</h4>
+                    <div class="value">{len(error_files)}</div>
+                    <div class="label">Ошибки загрузки</div>
+                </div>
+                
+                <div class="stat-card">
+                    <h4>📈 Запросов iCal</h4>
+                    <div class="value">{stats.get('total_requests', 0)}</div>
+                    <div class="label">За последние 7 дней</div>
+                </div>
+            </div>
+            
+            <div class="config-box">
+                <h3>⚙️ Конфигурация</h3>
+                <div class="config-row">
+                    <span class="config-label">Время жизни кэша:</span>
+                    <span class="config-value">{config.CACHE_MAX_AGE // 3600} часов</span>
+                </div>
+                <div class="config-row">
+                    <span class="config-label">Очистка старых файлов:</span>
+                    <span class="config-value">через {config.CACHE_CLEANUP_DAYS} дней</span>
+                </div>
+                <div class="config-row">
+                    <span class="config-label">База данных:</span>
+                    <span class="config-value">{config.DB_NAME} ({config.DB_HOST})</span>
+                </div>
+                <div class="config-row">
+                    <span class="config-label">WordPress URL:</span>
+                    <span class="config-value">{config.WP_URL}</span>
+                </div>
             </div>
             
             <div>
-                <a href="{self._url('sync')}" class="btn">🔄 Синхронизировать все</a>
+                <button onclick="confirmSync()" class="btn">🔄 Синхронизировать все</button>
+                <button onclick="confirmCleanup()" class="btn btn-secondary">🧹 Очистить старый кэш</button>
+                <a href="{self._url('stats')}" class="btn btn-info">📊 Статистика запросов</a>
                 <a href="{self._url('/')}" class="btn btn-secondary">🏠 На главную</a>
                 <a href="{self._url('logout')}" class="btn btn-danger">🚪 Выйти</a>
             </div>
             
-            {self._generate_keys_table(keys)}
+            <div class="tabs">
+                <div id="keys-tab" class="tab active" onclick="showTab('keys')">Ключи из БД</div>
+                <div id="cache-tab" class="tab" onclick="showTab('cache')">Файлы в кэше</div>
+                <div id="errors-tab" class="tab" onclick="showTab('errors')">Файлы ошибок</div>
+            </div>
+
+            <div id="keys-content" class="tab-content active">
+                <h3 class="section-title">Ключи iCal из базы данных</h3>
+                {self._generate_keys_table(keys)}
+            </div>
+
+            <div id="cache-content" class="tab-content" style="display: none;">
+                <h3 class="section-title">Файлы iCal в кэше</h3>
+                {self._generate_cache_table(cache_files)}
+            </div>
+
+            <div id="errors-content" class="tab-content" style="display: none;">
+                <h3 class="section-title">Файлы ошибок</h3>
+                {self._generate_errors_table(error_files)}
+            </div>
             
-            <footer style="margin-top: 40px; text-align: center; color: #666;">
-                <p>iCal Sync Service • {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+            <footer>
+                <p>iCal Sync Service • {datetime.now().strftime('%Y-%m-%d %H:%M')} • Активных сессий: {len(SessionStorage._sessions)}</p>
             </footer>
+            
+            <script>
+                // Показываем первую вкладку по умолчанию
+                // showTab('keys');
+            </script>
         </body>
         </html>
         """
@@ -837,6 +1149,157 @@ class ICalApp:
         headers = [('Content-Type', 'text/html; charset=utf-8')]
         start_response('200 OK', headers)
         return [html.encode('utf-8')]
+
+    def _get_cache_files_info(self):
+        """Получение информации о файлах в кэше"""
+        cache_manager = ICalManager()
+        cache_dir = Path(config.CACHE_DIR)
+        
+        files_info = []
+        if cache_dir.exists():
+            for ics_file in cache_dir.glob("*.ics"):
+                stat = ics_file.stat()
+                file_age = time.time() - stat.st_mtime
+                is_fresh = file_age < config.CACHE_MAX_AGE
+                
+                files_info.append({
+                    'filename': ics_file.name,
+                    'size_kb': stat.st_size / 1024,
+                    'modified': datetime.fromtimestamp(stat.st_mtime),
+                    'age_seconds': file_age,
+                    'is_fresh': is_fresh,
+                    'path': ics_file
+                })
+        
+        # Сортируем по времени изменения (новые первыми)
+        files_info.sort(key=lambda x: x['modified'], reverse=True)
+        return files_info
+
+    def _get_error_files_info(self):
+        """Получение информации о файлах ошибок"""
+        cache_dir = Path(config.CACHE_DIR)
+        
+        files_info = []
+        if cache_dir.exists():
+            for err_file in cache_dir.glob("*.err"):
+                stat = err_file.stat()
+                
+                files_info.append({
+                    'filename': err_file.name,
+                    'size_kb': stat.st_size / 1024,
+                    'modified': datetime.fromtimestamp(stat.st_mtime),
+                    'path': err_file
+                })
+        
+        # Сортируем по времени изменения (новые первыми)
+        files_info.sort(key=lambda x: x['modified'], reverse=True)
+        return files_info
+
+    def _generate_cache_table(self, cache_files):
+        """Генерация таблицы с файлами кэша"""
+        if not cache_files:
+            return '<p>Нет файлов в кэше</p>'
+        
+        rows = []
+        for i, file_info in enumerate(cache_files[:50], 1):  # Первые 50
+            status_class = 'status-fresh' if file_info['is_fresh'] else 'status-stale'
+            status_text = 'Актуален' if file_info['is_fresh'] else 'Устарел'
+            
+            filename = file_info['filename']
+            size_kb = file_info['size_kb']
+            modified = file_info['modified'].strftime('%Y-%m-%d %H:%M')
+            age_hours = int(file_info['age_seconds'] // 3600)
+            
+            ical_url = self._url(f'ical/{filename}')
+            ical_key = filename[:-4]  # Убираем .ics
+            
+            rows.append(f"""
+            <tr>
+                <td>{i}</td>
+                <td><code>{filename}</code></td>
+                <td><span class="status-badge {status_class}">{status_text}</span></td>
+                <td>{size_kb:.1f} KB</td>
+                <td>
+                    <div>{modified}</div>
+                    <div class="timestamp">({age_hours} часов назад)</div>
+                </td>
+                <td class="actions-cell">
+                    <a href="{ical_url}" target="_blank">📥 Скачать</a>
+                    <a href="{self._url(f'sync_key/{ical_key}')}" title="Обновить">🔄</a>
+                </td>
+            </tr>
+            """)
+        
+        return f"""
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Имя файла</th>
+                    <th>Статус</th>
+                    <th>Размер</th>
+                    <th>Изменен</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(rows)}
+            </tbody>
+        </table>
+        <p style="color: #666; margin-top: 10px;">Показано {len(cache_files[:50])} из {len(cache_files)} файлов</p>
+        """
+
+    def _generate_errors_table(self, error_files):
+        """Генерация таблицы с файлами ошибок"""
+        if not error_files:
+            return '<p>Файлов ошибок нет</p>'
+        
+        rows = []
+        for i, file_info in enumerate(error_files[:30], 1):  # Первые 30
+            filename = file_info['filename']
+            size_kb = file_info['size_kb']
+            modified = file_info['modified'].strftime('%Y-%m-%d %H:%M')
+            
+            # Пробуем прочитать содержимое ошибки
+            error_content = ""
+            try:
+                error_content = file_info['path'].read_text(encoding='utf-8')[:100]
+                if len(error_content) > 100:
+                    error_content = error_content[:97] + "..."
+            except:
+                error_content = "Не удалось прочитать"
+            
+            rows.append(f"""
+            <tr>
+                <td>{i}</td>
+                <td><code>{filename}</code></td>
+                <td>{size_kb:.1f} KB</td>
+                <td>{modified}</td>
+                <td><span style="color: #dc3545; font-family: monospace;">{error_content}</span></td>
+                <td class="actions-cell">
+                    <a href="{self._url(f'delete_error/{filename}')}" title="Удалить" style="color: #dc3545;">🗑️</a>
+                </td>
+            </tr>
+            """)
+        
+        return f"""
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Имя файла</th>
+                    <th>Размер</th>
+                    <th>Создан</th>
+                    <th>Ошибка</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(rows)}
+            </tbody>
+        </table>
+        <p style="color: #666; margin-top: 10px;">Показано {len(error_files[:30])} из {len(error_files)} файлов</p>
+        """
     
     def _generate_keys_table(self, keys):
         """Генерация таблицы с ключами"""
@@ -882,8 +1345,53 @@ class ICalApp:
         if not filename.endswith('.ics'):
             return self.handle_404(environ, start_response)
         
-        # Простой тестовый iCal
-        ical_content = """BEGIN:VCALENDAR
+        # Логируем запрос
+        client_ip = environ.get('REMOTE_ADDR', 'unknown')
+        user_agent = environ.get('HTTP_USER_AGENT', 'unknown')
+        ICalStats.log_request(filename, client_ip, user_agent)
+        
+        # Проверяем, есть ли файл в кэше
+        cache_manager = ICalManager()
+        
+        # Пробуем извлечь ключ из имени файла (формат: ключ.ics или ID.ics)
+        import re
+        ical_key = None
+        property_id = None
+        
+        # Если имя файла - число, это ID
+        if filename[:-4].isdigit():
+            property_id = int(filename[:-4])
+            # Ищем ключ в базе
+            try:
+                conn = self.db.get_connection()
+                if conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT meta_value FROM wp_postmeta 
+                        WHERE post_id = %s AND meta_key = 'unique_code_ica' 
+                        AND meta_value != ''
+                    """, (property_id,))
+                    result = cursor.fetchone()
+                    if result:
+                        ical_key = result[0]
+                    cursor.close()
+                    conn.close()
+            except:
+                pass
+        else:
+            # Это ключ
+            ical_key = filename[:-4]
+        
+        # Пробуем получить из кэша
+        cached_content = cache_manager.get_cached_content(ical_key, property_id)
+        
+        if cached_content:
+            # Файл в кэше
+            ical_content = cached_content
+            logger.info(f"Отправлен кэшированный файл: {filename}")
+        else:
+            # Генерируем тестовый файл
+            ical_content = """BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//iCal Sync//Production
 BEGIN:VEVENT
@@ -894,6 +1402,7 @@ SUMMARY:Test Event
 DESCRIPTION:Событие из iCal Sync Service
 END:VEVENT
 END:VCALENDAR"""
+            logger.info(f"Отправлен тестовый файл: {filename}")
         
         headers = [
             ('Content-Type', 'text/calendar; charset=utf-8'),
@@ -902,9 +1411,9 @@ END:VCALENDAR"""
         ]
         start_response('200 OK', headers)
         return [ical_content.encode('utf-8')]
-    
+        
     def handle_sync(self, environ, start_response):
-        """Синхронизация (требует авторизации)"""
+        """HTML страница синхронизации"""
         if not self.check_auth(environ):
             return self.show_login_form('/sync', environ, start_response)
         
@@ -915,31 +1424,501 @@ END:VCALENDAR"""
             # Запускаем синхронизацию (без ограничений)
             result = sync_keys()
             
-            data = {
-                'status': 'success',
-                'message': 'Синхронизация выполнена',
-                'result': result,
-                'timestamp': datetime.now().isoformat(),
-                'action': 'sync_all'
-            }
+            # Форматируем результат для отображения
+            result_html = ""
+            if result.get('total', 0) > 0:
+                success_pct = (result['success'] / result['total']) * 100 if result['total'] > 0 else 0
+                
+                result_html = f"""
+                <div class="result-box success">
+                    <h3>✅ Синхронизация завершена!</h3>
+                    <div class="result-stats">
+                        <div class="stat">
+                            <span class="label">Всего объектов:</span>
+                            <span class="value">{result['total']}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Успешно:</span>
+                            <span class="value" style="color: #28a745;">{result['success']}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Пропущено (актуальны):</span>
+                            <span class="value" style="color: #ffc107;">{result['skipped']}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Ошибки:</span>
+                            <span class="value" style="color: #dc3545;">{result['errors']}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Успешность:</span>
+                            <span class="value">{success_pct:.1f}%</span>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 20px;">
+                        <h4>Детали выполнения:</h4>
+                        <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; max-height: 300px; overflow: auto;">
+{json.dumps(result, indent=2, ensure_ascii=False)}
+                        </pre>
+                    </div>
+                </div>
+                """
+            else:
+                result_html = """
+                <div class="result-box warning">
+                    <h3>⚠️ Нет объектов для синхронизации</h3>
+                    <p>В базе данных не найдено объектов с iCal ключами.</p>
+                </div>
+                """
             
-            headers = [('Content-Type', 'application/json; charset=utf-8')]
+            html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Результат синхронизации</title>
+                <meta charset="utf-8">
+                <style>
+                    body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }}
+                    .box {{ 
+                        border: 1px solid #ddd; 
+                        padding: 30px; 
+                        border-radius: 10px;
+                        background: #f9f9f9;
+                        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                    }}
+                    h1 {{ color: #333; margin-bottom: 30px; }}
+                    
+                    .result-box {{
+                        margin: 30px 0;
+                        padding: 25px;
+                        border-radius: 8px;
+                        background: white;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                    }}
+                    .result-box.success {{ border-left: 5px solid #28a745; }}
+                    .result-box.warning {{ border-left: 5px solid #ffc107; }}
+                    .result-box.error {{ border-left: 5px solid #dc3545; }}
+                    
+                    .result-stats {{
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                        gap: 15px;
+                        margin: 20px 0;
+                    }}
+                    .stat {{
+                        background: #f8f9fa;
+                        padding: 15px;
+                        border-radius: 5px;
+                    }}
+                    .stat .label {{
+                        display: block;
+                        font-size: 14px;
+                        color: #6c757d;
+                        margin-bottom: 5px;
+                    }}
+                    .stat .value {{
+                        display: block;
+                        font-size: 24px;
+                        font-weight: bold;
+                        color: #333;
+                    }}
+                    
+                    .btn {{ 
+                        display: inline-block; 
+                        padding: 12px 24px; 
+                        background: #4CAF50; 
+                        color: white; 
+                        text-decoration: none; 
+                        border-radius: 5px; 
+                        margin: 10px 5px;
+                        border: none;
+                        cursor: pointer;
+                        font-size: 16px;
+                    }}
+                    .btn:hover {{ background: #45a049; }}
+                    .btn-secondary {{ background: #6c757d; }}
+                    .btn-secondary:hover {{ background: #5a6268; }}
+                    
+                    .timestamp {{
+                        color: #6c757d;
+                        font-size: 14px;
+                        margin-top: 20px;
+                        padding-top: 20px;
+                        border-top: 1px solid #dee2e6;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="box">
+                    <h1>🔄 Результат синхронизации iCal</h1>
+                    
+                    {result_html}
+                    
+                    <div style="margin-top: 30px;">
+                        <a href="{self._url('admin')}" class="btn">← Назад в админку</a>
+                        <a href="{self._url('sync')}" class="btn-secondary">🔄 Запустить снова</a>
+                        <a href="{self._url('/')}" class="btn-secondary">🏠 На главную</a>
+                    </div>
+                    
+                    <div class="timestamp">
+                        Время выполнения: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+            
+            headers = [('Content-Type', 'text/html; charset=utf-8')]
             start_response('200 OK', headers)
-            return [json.dumps(data, indent=2, ensure_ascii=False).encode('utf-8')]
+            return [html.encode('utf-8')]
             
         except Exception as e:
             logger.error(f"Ошибка синхронизации: {e}")
             
-            data = {
-                'status': 'error',
-                'message': f'Ошибка синхронизации: {str(e)}',
-                'timestamp': datetime.now().isoformat()
-            }
+            html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Ошибка синхронизации</title>
+                <meta charset="utf-8">
+                <style>
+                    body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }}
+                    .box {{ 
+                        border: 1px solid #ddd; 
+                        padding: 30px; 
+                        border-radius: 10px;
+                        background: #f9f9f9;
+                    }}
+                    .error-box {{
+                        background: #f8d7da;
+                        color: #721c24;
+                        padding: 20px;
+                        border-radius: 5px;
+                        margin: 20px 0;
+                    }}
+                    .btn {{ 
+                        display: inline-block; 
+                        padding: 10px 20px; 
+                        background: #6c757d; 
+                        color: white; 
+                        text-decoration: none; 
+                        border-radius: 5px; 
+                        margin: 10px 5px;
+                    }}
+                    .btn:hover {{ background: #5a6268; }}
+                </style>
+            </head>
+            <body>
+                <div class="box">
+                    <h1>❌ Ошибка синхронизации</h1>
+                    
+                    <div class="error-box">
+                        <h3>Произошла ошибка:</h3>
+                        <pre>{str(e)}</pre>
+                    </div>
+                    
+                    <div>
+                        <a href="{self._url('admin')}" class="btn">← Назад в админку</a>
+                        <a href="{self._url('/')}" class="btn">🏠 На главную</a>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
             
-            headers = [('Content-Type', 'application/json; charset=utf-8')]
+            headers = [('Content-Type', 'text/html; charset=utf-8')]
             start_response('500 Internal Server Error', headers)
-            return [json.dumps(data, indent=2, ensure_ascii=False).encode('utf-8')]
+            return [html.encode('utf-8')]
+
+    def handle_stats(self, environ, start_response):
+        """Страница статистики запросов"""
+        if not self.check_auth(environ):
+            return self.show_login_form('/stats', environ, start_response)
+        
+        # Получаем статистику
+        stats = ICalStats.get_stats(days=30)
+        
+        # Формируем таблицу топ файлов
+        top_files_html = ""
+        if stats.get('by_filename'):
+            top_files = sorted(stats['by_filename'].items(), key=lambda x: x[1], reverse=True)[:20]
+            
+            rows = []
+            for i, (filename, count) in enumerate(top_files, 1):
+                ical_url = self._url(f'ical/{filename}')
+                rows.append(f"""
+                <tr>
+                    <td>{i}</td>
+                    <td><code>{filename}</code></td>
+                    <td>{count}</td>
+                    <td><a href="{ical_url}" target="_blank">Ссылка</a></td>
+                </tr>
+                """)
+            
+            top_files_html = f"""
+            <h3>📊 Топ-20 запрашиваемых файлов</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Файл</th>
+                        <th>Запросов</th>
+                        <th>Ссылка</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(rows)}
+                </tbody>
+            </table>
+            """
+        
+        # Формируем таблицу последних запросов
+        recent_requests_html = ""
+        if stats.get('recent_requests'):
+            rows = []
+            for i, req in enumerate(stats['recent_requests'][:20], 1):
+                dt = datetime.fromtimestamp(req['timestamp']).strftime('%Y-%m-%d %H:%M:%S')
+                rows.append(f"""
+                <tr>
+                    <td>{i}</td>
+                    <td>{dt}</td>
+                    <td><code>{req['filename']}</code></td>
+                    <td>{req['client_ip']}</td>
+                    <td><span class="status-badge {'status-fresh' if req['status'] == 'success' else 'status-stale'}">{req['status']}</span></td>
+                </tr>
+                """)
+            
+            recent_requests_html = f"""
+            <h3>🕒 Последние 20 запросов</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Время</th>
+                        <th>Файл</th>
+                        <th>IP</th>
+                        <th>Статус</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(rows)}
+                </tbody>
+            </table>
+            """
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Статистика запросов iCal</title>
+            <meta charset="utf-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }}
+                header {{ 
+                    background: linear-gradient(135deg, #17a2b8, #138496);
+                    color: white; 
+                    padding: 25px; 
+                    border-radius: 10px;
+                    margin-bottom: 20px;
+                }}
+                .stats-container {{ 
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                    gap: 15px;
+                    margin: 20px 0;
+                }}
+                .stat-card {{
+                    background: white;
+                    padding: 20px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                    border-left: 4px solid #17a2b8;
+                }}
+                .stat-card h4 {{ margin: 0 0 10px 0; color: #333; }}
+                .stat-card .value {{ 
+                    font-size: 24px; 
+                    font-weight: bold; 
+                    color: #17a2b8;
+                    margin: 10px 0;
+                }}
+                .stat-card .label {{ color: #666; font-size: 14px; }}
+                
+                table {{ 
+                    width: 100%; 
+                    border-collapse: collapse; 
+                    margin: 20px 0;
+                    background: white;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+                    border-radius: 8px;
+                    overflow: hidden;
+                }}
+                th, td {{ padding: 12px 15px; text-align: left; border-bottom: 1px solid #dee2e6; }}
+                th {{ background: #f8f9fa; font-weight: 600; color: #495057; }}
+                tr:hover {{ background: #f8f9fa; }}
+                
+                .btn {{ 
+                    display: inline-block; 
+                    padding: 10px 20px; 
+                    background: #17a2b8; 
+                    color: white; 
+                    text-decoration: none; 
+                    border-radius: 5px; 
+                    margin: 10px 5px;
+                    border: none;
+                    cursor: pointer;
+                }}
+                .btn:hover {{ background: #138496; }}
+                .btn-secondary {{ background: #6c757d; }}
+                .btn-secondary:hover {{ background: #5a6268; }}
+                
+                .status-badge {{
+                    display: inline-block;
+                    padding: 4px 8px;
+                    border-radius: 12px;
+                    font-size: 12px;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                }}
+                .status-fresh {{ background: #d4edda; color: #155724; }}
+                .status-stale {{ background: #fff3cd; color: #856404; }}
+            </style>
+        </head>
+        <body>
+            <header>
+                <h1>📈 Статистика запросов iCal файлов</h1>
+                <p>Аналитика запросов за последние 30 дней</p>
+            </header>
+            
+            <div class="stats-container">
+                <div class="stat-card">
+                    <h4>📊 Всего запросов</h4>
+                    <div class="value">{stats.get('total_requests', 0)}</div>
+                    <div class="label">За 30 дней</div>
+                </div>
+                
+                <div class="stat-card">
+                    <h4>✅ Успешных</h4>
+                    <div class="value">{stats.get('successful', 0)}</div>
+                    <div class="label">Завершено успешно</div>
+                </div>
+                
+                <div class="stat-card">
+                    <h4>⚠ С ошибками</h4>
+                    <div class="value">{stats.get('failed', 0)}</div>
+                    <div class="label">Завершено с ошибкой</div>
+                </div>
+                
+                <div class="stat-card">
+                    <h4>🌐 Уникальных IP</h4>
+                    <div class="value">{len(stats.get('by_ip', {}))}</div>
+                    <div class="label">Разных адресов</div>
+                </div>
+            </div>
+            
+            <div>
+                <a href="{self._url('admin')}" class="btn-secondary btn">← Назад в админку</a>
+                <a href="{self._url('/')}" class="btn-secondary btn">🏠 На главную</a>
+            </div>
+            
+            {top_files_html}
+            {recent_requests_html}
+            
+            <footer style="margin-top: 40px; text-align: center; color: #666;">
+                <p>Статистика обновлена: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            </footer>
+        </body>
+        </html>
+        """
+        
+        headers = [('Content-Type', 'text/html; charset=utf-8')]
+        start_response('200 OK', headers)
+        return [html.encode('utf-8')]
     
+    def handle_sync_single(self, environ, start_response):
+        """Синхронизация одного ключа"""
+        if not self.check_auth(environ):
+            return self.show_login_form('/admin', environ, start_response)
+        
+        path = environ.get('PATH_INFO', '')
+        key = path.split('/sync_key/')[-1]
+        
+        # TODO: Реализовать синхронизацию одного ключа
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head><title>Синхронизация ключа</title></head>
+        <body>
+            <h1>Синхронизация ключа: {key}</h1>
+            <p>Функция в разработке...</p>
+            <a href="{self._url('admin')}">← Назад</a>
+        </body>
+        </html>
+        """
+        
+        headers = [('Content-Type', 'text/html; charset=utf-8')]
+        start_response('200 OK', headers)
+        return [html.encode('utf-8')]
+
+    def handle_delete_error(self, environ, start_response):
+        """Удаление файла ошибки"""
+        if not self.check_auth(environ):
+            return self.show_login_form('/admin', environ, start_response)
+        
+        path = environ.get('PATH_INFO', '')
+        filename = path.split('/delete_error/')[-1]
+        
+        cache_dir = Path(config.CACHE_DIR)
+        error_file = cache_dir / filename
+        
+        if error_file.exists() and filename.endswith('.err'):
+            try:
+                error_file.unlink()
+                logger.info(f"Удален файл ошибки: {filename}")
+            except Exception as e:
+                logger.error(f"Ошибка удаления файла {filename}: {e}")
+        
+        # Редирект обратно в админку
+        headers = [
+            ('Location', self._url('admin')),
+            ('Content-Type', 'text/html; charset=utf-8')
+        ]
+        start_response('302 Found', headers)
+        return [b'']
+
+    def handle_cleanup(self, environ, start_response):
+        """Очистка старых файлов"""
+        if not self.check_auth(environ):
+            return self.show_login_form('/admin', environ, start_response)
+        
+        from cleanup import cleanup_old_files
+        result = cleanup_old_files()
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Очистка кэша</title>
+            <style>
+                body {{ font-family: Arial; padding: 50px; }}
+                .box {{ max-width: 600px; margin: auto; padding: 30px; border: 1px solid #ddd; }}
+                .success {{ color: green; }}
+            </style>
+        </head>
+        <body>
+            <div class="box">
+                <h1>🧹 Очистка кэша</h1>
+                <p class="success">✅ Удалено {result.get('deleted_count', 0)} старых файлов</p>
+                <p>Освобождено {result.get('deleted_size_mb', 0):.2f} MB</p>
+                <p><a href="{self._url('admin')}">← Назад в админку</a></p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        headers = [('Content-Type', 'text/html; charset=utf-8')]
+        start_response('200 OK', headers)
+        return [html.encode('utf-8')]
+
     def handle_404(self, environ, start_response, message="Not Found"):
         """Обработка 404 ошибки"""
         html = f"""
